@@ -34,7 +34,7 @@ export function createScene(mount) {
   resize(w, h);
 
   return {
-    scene, camera, renderer, resize,
+    scene, camera, renderer, resize, environment: scene.environment,
     size: () => ({ w, h }),
     toWorld: (x, y) => ({ x: x - w / 2, y: h / 2 - y }),
     toStage: (x, y) => ({ x: x + w / 2, y: h / 2 - y }),

@@ -31,11 +31,25 @@ function hole(shape, x, y, r) {
   shape.holes.push(p);
 }
 
+// A port is a mounting point: position and normal in part-local px (unscaled). `hint` fixes the twist
+// around the normal; `strict` means the twist may not be re-chosen when snapping.
+const port = (name, kind, pos, normal, hint, strict = false) => ({ name, kind, pos, normal, hint, strict });
+const KIND_PAIRS = [['motor-base', 'deck-edge'], ['comp-base', 'deck'], ['caster-top', 'underdeck'], ['hub', 'shaft']];
+export const portsCompatible = (a, b) => KIND_PAIRS.some(([x, y]) => (x === a && y === b) || (x === b && y === a));
+
+function plateGrid({ length, width }) {
+  const pitch = c(2);
+  const nx = Math.max(1, Math.floor(length / 2) - 1), ny = Math.max(1, Math.floor(width / 2) - 1);
+  return { pitch, nx, ny, x: (i) => (i - (nx - 1) / 2) * pitch, y: (j) => (j - (ny - 1) / 2) * pitch };
+}
+
 export const CATALOG = {
   wheel: {
     name: 'Wheel',
     defaults: { diameter: 10, width: 4 },
     label: (p, s) => `Wheel  Ø${f(p.diameter * s)} × ${f(p.width * s)} cm`,
+    ports: (p) => [port('hub', 'hub', [0, 0, -c(p.width) / 2], [0, 0, -1], [1, 0, 0])],
+    phys: (p) => ({ mass: 0.05 * (p.diameter / 10) ** 2 * (p.width / 4), mu: 0.8 }),
     build({ diameter, width }) {
       const R = c(diameter / 2), W = c(width), g = new THREE.Group();
       const rubber = mat(0x1b1d22, { metal: 0, rough: 0.9 });
@@ -74,6 +88,11 @@ export const CATALOG = {
     name: 'Motor',
     defaults: { diameter: 3.5, length: 6 },
     label: (p, s) => `Motor  Ø${f(p.diameter * s)} × ${f(p.length * s)} cm`,
+    ports: (p) => [
+      port('base', 'motor-base', [0, -c(p.diameter) / 2, 0], [0, -1, 0], [0, 0, 1], true),
+      port('shaft', 'shaft', [0, 0, c(p.length) * 0.69], [0, 0, 1], [1, 0, 0]),
+    ],
+    phys: (p) => ({ mass: 0.09 * (p.diameter / 3.5) ** 2 * (p.length / 6), noLoadRPM: 150, stallTorque: 0.12, ratedV: 6 }),
     build({ diameter, length }) {
       const R = c(diameter / 2), L = c(length), g = new THREE.Group();
       const steel = mat(0x8b95a3, { metal: 0.85, rough: 0.35 });
@@ -119,14 +138,25 @@ export const CATALOG = {
     name: 'Chassis plate',
     defaults: { length: 20, width: 12, thickness: 0.6 },
     label: (p, s) => `Plate  ${f(p.length * s)} × ${f(p.width * s)} × ${f(p.thickness * s)} cm`,
+    ports(p) {
+      const g = plateGrid(p), T = c(p.thickness), out = [];
+      for (let i = 0; i < g.nx; i++)
+        for (let j = 0; j < g.ny; j++) {
+          const x = g.x(i), y = g.y(j);
+          out.push(port(`deck-${i}-${j}`, 'deck', [x, y, T / 2], [0, 0, 1], [1, 0, 0]));
+          out.push(port(`under-${i}-${j}`, 'underdeck', [x, y, -T / 2], [0, 0, -1], [1, 0, 0]));
+          if (g.ny > 1 && (j === 0 || j === g.ny - 1)) out.push(port(`edge-${i}-${j}`, 'deck-edge', [x, y, T / 2], [0, 0, 1], [0, j === 0 ? -1 : 1, 0]));
+        }
+      return out;
+    },
+    phys: (p) => ({ mass: p.length * p.width * p.thickness * 2.7 * 0.0009 }),
     build({ length, width, thickness }) {
       const L = c(length), W = c(width), T = c(thickness);
       const shape = new THREE.Shape();
       shape.moveTo(-L / 2, -W / 2); shape.lineTo(L / 2, -W / 2); shape.lineTo(L / 2, W / 2); shape.lineTo(-L / 2, W / 2); shape.closePath();
-      const pitch = c(2);
-      const nx = Math.max(1, Math.floor(L / pitch) - 1), ny = Math.max(1, Math.floor(W / pitch) - 1);
-      for (let i = 0; i < nx; i++)
-        for (let j = 0; j < ny; j++) hole(shape, (i - (nx - 1) / 2) * pitch, (j - (ny - 1) / 2) * pitch, c(0.4));
+      const grid = plateGrid({ length, width });
+      for (let i = 0; i < grid.nx; i++)
+        for (let j = 0; j < grid.ny; j++) hole(shape, grid.x(i), grid.y(j), c(0.4));
       const g = new THREE.Group();
       g.add(extrude(shape, T, mat(0x9fb0c2, { metal: 0.75, rough: 0.4 })));
       return g;
@@ -189,7 +219,115 @@ export const CATALOG = {
       return g;
     },
   },
+
+  // ---- rover electronics & support -------------------------------------------------------------
+  caster: {
+    name: 'Ball caster',
+    defaults: { height: 2.65, ball: 1.6 },
+    label: (p, s) => `Caster  h${f(p.height * s)} cm`,
+    ports: (p) => [port('top', 'caster-top', [0, 0, c(p.height) / 2], [0, 0, 1], [1, 0, 0])],
+    phys: () => ({ mass: 0.03 }),
+    build({ height, ball }) {
+      const H = c(height), br = c(ball) / 2, g = new THREE.Group();
+      const steel = mat(0xc6ced8, { metal: 0.9, rough: 0.25 });
+      const dark = mat(0x2b3038, { metal: 0.5, rough: 0.5 });
+      g.add(at(cyl(c(1.3), c(0.25), dark), 0, 0, H / 2 - c(0.125)));
+      const hl = H - c(0.25) - br;
+      g.add(at(cyl(c(0.95), hl, dark), 0, 0, H / 2 - c(0.25) - hl / 2));
+      g.add(at(new THREE.Mesh(new THREE.SphereGeometry(br, 24, 16), steel), 0, 0, -H / 2 + br));
+      return g;
+    },
+  },
+
+  battery: {
+    name: 'Battery pack',
+    defaults: { length: 6.2, width: 5.6, height: 1.7, voltage: 6 },
+    label: (p, s) => `Battery  ${f(p.voltage)}V  ${f(p.length * s)} × ${f(p.width * s)} cm`,
+    ports: (p) => [port('base', 'comp-base', [0, 0, -c(p.height) / 2], [0, 0, -1], [1, 0, 0])],
+    phys: () => ({ mass: 0.14 }),
+    build({ length, width, height }) {
+      const L = c(length), W = c(width), H = c(height), g = new THREE.Group();
+      const shell = mat(0x22252b, { metal: 0.1, rough: 0.7 });
+      const cell = mat(0xc9a227, { metal: 0.7, rough: 0.35 });
+      g.add(box(L, W, H, shell));
+      const r = W / 9;
+      for (let i = 0; i < 4; i++) {
+        const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, L * 0.86, 20).rotateZ(Math.PI / 2), cell);
+        m.position.set(0, (i - 1.5) * (W / 4.3), H / 2 - r * 0.35);
+        g.add(m);
+      }
+      g.add(box(c(0.5), c(0.3), c(0.3), mat(0xd23a3a), [-L / 2 - c(0.25), W * 0.2, 0]));
+      g.add(box(c(0.5), c(0.3), c(0.3), mat(0x101010), [-L / 2 - c(0.25), -W * 0.2, 0]));
+      return g;
+    },
+  },
+
+  controller: {
+    name: 'Controller',
+    defaults: { length: 6.9, width: 5.3, height: 1.4 },
+    label: (p, s) => `Controller  ${f(p.length * s)} × ${f(p.width * s)} cm`,
+    ports: (p) => [port('base', 'comp-base', [0, 0, -c(p.height) / 2], [0, 0, -1], [1, 0, 0])],
+    phys: () => ({ mass: 0.04 }),
+    build({ length, width, height }) {
+      const L = c(length), W = c(width), H = c(height), g = new THREE.Group();
+      const pcb = mat(0x0f6b5c, { metal: 0.2, rough: 0.6 });
+      const black = mat(0x15171a, { metal: 0.3, rough: 0.6 });
+      const silver = mat(0xc0c7cf, { metal: 0.9, rough: 0.3 });
+      g.add(box(L, W, c(0.16), pcb, [0, 0, -H / 2 + c(0.08)]));
+      g.add(box(c(1.6), c(1.2), H * 0.7, silver, [-L / 2 + c(0.6), -W * 0.2, -H / 2 + H * 0.35]));
+      for (const sy of [-1, 1]) g.add(box(L * 0.7, c(0.25), c(0.85), black, [c(0.2), sy * (W / 2 - c(0.2)), -H / 2 + c(0.42)]));
+      g.add(box(c(1.6), c(1.6), c(0.3), black, [c(0.5), 0, -H / 2 + c(0.3)]));
+      return g;
+    },
+  },
+
+  driver: {
+    name: 'Motor driver',
+    defaults: { length: 4.3, width: 4.3, height: 2.7 },
+    label: (p, s) => `Driver  ${f(p.length * s)} × ${f(p.width * s)} cm`,
+    ports: (p) => [port('base', 'comp-base', [0, 0, -c(p.height) / 2], [0, 0, -1], [1, 0, 0])],
+    phys: () => ({ mass: 0.035 }),
+    build({ length, width, height }) {
+      const L = c(length), W = c(width), H = c(height), g = new THREE.Group();
+      const pcb = mat(0xb3262e, { metal: 0.2, rough: 0.6 });
+      const black = mat(0x15171a, { metal: 0.5, rough: 0.5 });
+      const blue = mat(0x2a6df4, { metal: 0.1, rough: 0.6 });
+      g.add(box(L, W, c(0.16), pcb, [0, 0, -H / 2 + c(0.08)]));
+      g.add(box(L * 0.42, W * 0.5, H * 0.85, black, [0, 0, -H / 2 + H * 0.425]));
+      for (let i = 0; i < 4; i++) g.add(box(L * 0.44, c(0.08), H * 0.6, black, [0, (i - 1.5) * W * 0.11, -H / 2 + H * 0.9]));
+      g.add(box(c(0.9), W * 0.8, H * 0.4, blue, [-L / 2 + c(0.45), 0, -H / 2 + H * 0.2]));
+      return g;
+    },
+  },
+
+  sonar: {
+    name: 'Ultrasonic sensor',
+    defaults: { width: 4.5, height: 2 },
+    label: (p, s) => `Sonar  ${f(p.width * s)} × ${f(p.height * s)} cm`,
+    ports: (p) => [port('base', 'comp-base', [0, 0, -c(p.height) / 2], [0, 0, -1], [1, 0, 0], true)],
+    phys: () => ({ mass: 0.01, range: 3 }),
+    build({ width, height }) {
+      const W = c(width), H = c(height), g = new THREE.Group();
+      const pcb = mat(0x1a5fb4, { metal: 0.2, rough: 0.6 });
+      const silver = mat(0xc0c7cf, { metal: 0.9, rough: 0.3 });
+      const dark = mat(0x101317, { metal: 0.4, rough: 0.6 });
+      g.add(box(c(0.2), W, H, pcb));
+      for (const sy of [-1, 1]) {
+        const eye = new THREE.Mesh(new THREE.CylinderGeometry(c(0.8), c(0.8), c(1.1), 28).rotateZ(Math.PI / 2), silver);
+        eye.position.set(c(0.65), sy * W * 0.25, 0);
+        g.add(eye);
+        const cap = new THREE.Mesh(new THREE.CylinderGeometry(c(0.55), c(0.55), c(0.05), 24).rotateZ(Math.PI / 2), dark);
+        cap.position.set(c(1.22), sy * W * 0.25, 0);
+        g.add(cap);
+      }
+      return g;
+    },
+  },
 };
+
+// mesh -> part lookup (kept out of userData: three clones userData through JSON, which chokes on cycles)
+const partOfMesh = new WeakMap();
+export const partOf = (obj) => partOfMesh.get(obj);
 
 let uid = 0;
 const TILT = new THREE.Euler(-0.5, 0.55, 0); // so the 3D shape is visible at spawn
@@ -202,11 +340,14 @@ export function createPart(type, overrides = {}) {
   const group = new THREE.Group();
   group.add(def.build(params));
   const radius = new THREE.Box3().setFromObject(group).getBoundingSphere(new THREE.Sphere()).radius;
+  const localBox = new THREE.Box3().setFromObject(group);
   group.quaternion.setFromEuler(TILT);
 
   const materials = new Set();
   const part = {
-    id: ++uid, type, params, group, radius, userScale: 1, heldBy: null,
+    id: ++uid, type, params, group, radius, localBox, userScale: 1, heldBy: null, lift: 0,
+    ports: def.ports ? def.ports(params) : [],
+    phys: def.phys ? def.phys(params) : { mass: 0.05 },
     label: () => def.label(params, part.userScale),
     setGlow(v) { for (const m of materials) m.emissive.setRGB(0.04 * v, 0.3 * v, 0.4 * v); },
     dispose() {
@@ -215,7 +356,7 @@ export function createPart(type, overrides = {}) {
     },
   };
   group.traverse((o) => {
-    if (o.isMesh) { o.userData.part = part; materials.add(o.material); }
+    if (o.isMesh) { partOfMesh.set(o, part); materials.add(o.material); }
   });
   return part;
 }
