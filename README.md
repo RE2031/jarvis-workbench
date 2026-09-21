@@ -5,16 +5,23 @@ Build robot hardware with your hands. A webcam-driven 3D workbench: pinch a part
 ## Run
 Double-click `serve.bat` (or `python -m http.server 8000`) and open http://localhost:8000. Camera access requires `localhost`, not `file://`.
 
+## Editor (CoppeliaSim-style)
+- **Scene hierarchy** (left): every object, with bolted-on parts nested under their chassis. Click a row to select.
+- **Object properties** (right): edit position (cm), rotation (°), scale and the part's own dimensions. Changing a wheel's diameter rebuilds it and keeps it seated on its motor.
+- **Start / Stop simulation** in the toolbar. Undo / redo (Ctrl+Z / Ctrl+Y), autosave, save / load file, and *Export parts list* (CSV with suggested real-world parts).
+
 ## Controls
 | Action | Hand | Mouse fallback |
 |---|---|---|
 | Grab / move | pinch thumb + index over a part | drag |
-| Rotate | twist wrist while pinching | shift + wheel |
+| Rotate | turn your hand (full 3D palm orientation) | right-drag (trackball), shift + wheel = twist |
 | Scale a loose part | pinch with both hands and spread / close | wheel |
 | Spawn | pinch a palette item | click it |
-| Snap together (magnetic) | bring compatible parts close: they are pulled in and lock with a green dot; wheel↔motor and motor↔chassis pull from furthest away | same |
-| Pull a part off | grab a part that is bolted on and pull firmly away (it takes whatever hangs off it) | same |
-| Delete | drop the part / assembly on the trash zone | same |
+| Snap together (magnetic) | bring compatible parts close: dots show where they fit, the part is pulled in and locks (green dot) | same |
+| Pull a part off | grab a bolted-on part and pull firmly away | same |
+| Delete | drop on the trash, or hover + Delete | same |
+
+Pinch feels off? Open ⚙ Settings: a live pinch meter shows the thumb-index ratio against the thresholds, and **Calibrate pinch** measures your hand and sets them for you.
 
 ## Building a rover
 Parts have mounting ports that snap to matching ports on other parts:

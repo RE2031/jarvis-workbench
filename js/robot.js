@@ -20,9 +20,9 @@ export function analyzeRobot(parts, connections, assemblyOf) {
     .find((o) => o?.type === 'motor');
 
   // Chassis frame from the plate's pose (scale removed so px stay world px).
+  members.forEach((m) => m.group.updateMatrixWorld(true)); // parts may not have been drawn yet (e.g. right after undo)
   const frame = new THREE.Matrix4();
   if (chassis) {
-    chassis.group.updateMatrixWorld(true);
     frame.compose(chassis.group.position, chassis.group.quaternion, new THREE.Vector3(1, 1, 1)).invert();
   }
   const rel = (part) => new THREE.Matrix4().multiplyMatrices(frame, part.group.matrixWorld);

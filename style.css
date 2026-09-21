@@ -38,7 +38,8 @@ button:hover { filter: brightness(1.1); }
 button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
 header button { padding: 4px 10px; background: transparent; color: var(--text); border: 1px solid var(--line); }
 
-#workspace { flex: 1; min-height: 0; display: grid; place-items: center; }
+#workspace { flex: 1; min-height: 0; display: flex; }
+#center { flex: 1; min-width: 0; display: grid; place-items: center; }
 #stage {
   position: relative; width: 1280px; height: 720px; background: #000;
   overflow: hidden; border: 1px solid var(--line);
@@ -120,3 +121,75 @@ header button.primary { background: var(--accent); color: #04222b; border-color:
 body.sim #palette, body.sim #trash, body.sim #partLabel, body.sim #checklist, body.sim #hint, body.sim #cam { display: none !important; }
 body.sim #simhud { display: block; }
 body.sim #btn-sim, body.sim #btn-clear { display: none; }
+
+/* ---- CoppeliaSim-style docks ------------------------------------------------------------ */
+.dock { width: 230px; flex: none; background: #0a0f16; border: 0 solid var(--line); overflow-y: auto; font-size: 12px; display: none; }
+#tree { border-right-width: 1px; }
+#inspector { border-left-width: 1px; width: 250px; }
+body.show-tree #tree, body.show-insp #inspector { display: block; }
+body.sim .dock { display: none !important; }
+.dock-head { padding: 8px 12px; font-size: 10px; letter-spacing: .18em; color: var(--muted); border-bottom: 1px solid var(--line); position: sticky; top: 0; background: #0a0f16; z-index: 1; }
+header button.toggle.on { border-color: var(--accent); color: var(--accent); }
+header button.stop, body.sim #btn-stop { background: var(--accent2); border-color: var(--accent2); color: #2a0612; }
+#btn-stop { display: none; }
+body.sim #btn-stop { display: inline-block; }
+
+.node { display: flex; align-items: center; gap: 6px; padding: 3px 8px; cursor: pointer; white-space: nowrap; border-left: 2px solid transparent; }
+.node:hover { background: rgba(77,225,255,.08); }
+.node.sel { background: rgba(77,225,255,.18); border-left-color: var(--accent); color: #fff; }
+.node small { color: var(--muted); margin-left: auto; padding-left: 8px; overflow: hidden; text-overflow: ellipsis; }
+.node .dot { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); flex: none; }
+.node .ref { color: var(--muted); }
+.tree-empty { padding: 14px; color: var(--muted); }
+
+#insp-body { padding: 10px 12px; }
+#insp-body h4 { margin: 12px 0 6px; font-size: 10px; letter-spacing: .15em; color: var(--muted); font-weight: 600; }
+#insp-body h4:first-child { margin-top: 0; }
+#insp-body .title { color: #fff; font-size: 14px; font-weight: 600; }
+.prow { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-bottom: 4px; }
+.prow.one { grid-template-columns: 1fr 1fr; }
+.prow label { display: flex; flex-direction: column; color: var(--muted); font-size: 10px; gap: 2px; }
+.prow input { width: 100%; background: #060a10; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font: inherit; font-size: 12px; }
+.prow input:focus { outline: 1px solid var(--accent); }
+.kv { display: flex; justify-content: space-between; padding: 1px 0; color: var(--muted); }
+.kv b { color: var(--text); font-weight: 500; }
+.btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.btns button { padding: 3px 10px; background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 500; }
+.btns button.danger { color: var(--accent2); border-color: var(--accent2); }
+.dim { color: var(--muted); }
+
+/* ---- settings / help / toasts ------------------------------------------------------------ */
+#settings { position: fixed; right: 12px; top: 52px; width: 290px; max-height: calc(100vh - 70px); overflow-y: auto; z-index: 8;
+  background: #0b121a; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 12px; }
+#settings[hidden], .modal[hidden] { display: none; }
+#settings h3 { margin: 14px 0 6px; font-size: 10px; letter-spacing: .18em; color: var(--muted); }
+#settings label { display: block; margin: 6px 0; color: var(--text); }
+#settings label output { float: right; color: var(--accent); }
+#settings input[type=range] { width: 100%; }
+#settings .check { display: flex; gap: 8px; align-items: center; }
+#settings .row { display: flex; justify-content: space-between; align-items: center; }
+#settings .row.wrap { flex-wrap: wrap; gap: 6px; justify-content: flex-start; }
+#settings button { padding: 4px 10px; }
+#settings button.ghost, .card button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+.x { background: transparent !important; color: var(--muted) !important; padding: 0 6px !important; }
+#meter { margin: 4px 0 8px; }
+.mrow { display: grid; grid-template-columns: 44px 1fr 38px; align-items: center; gap: 8px; margin: 3px 0; color: var(--muted); }
+.mbar { position: relative; height: 10px; background: #060a10; border: 1px solid var(--line); border-radius: 5px; }
+.mbar i { position: absolute; top: 0; bottom: 0; left: 0; background: var(--accent); border-radius: 4px; }
+.mbar.on i { background: var(--accent2); }
+.mbar u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #fff; opacity: .7; }
+.mbar u.off { opacity: .35; }
+
+.modal { position: fixed; inset: 0; background: rgba(4, 7, 11, 0.85); display: grid; place-items: center; z-index: 12; }
+#splash { z-index: 14; }
+.card ul { padding-left: 18px; margin: 0 0 12px; }
+.card li { margin: 4px 0; }
+
+#toasts { position: absolute; left: 50%; bottom: 46px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; z-index: 5; }
+.toast { background: rgba(10, 16, 24, .92); border: 1px solid var(--accent); color: var(--text); padding: 5px 14px; border-radius: 999px; font-size: 12px; animation: pop .2s ease-out; }
+@keyframes pop { from { transform: translateY(8px); opacity: 0; } }
+#calib { position: absolute; inset: 0; display: none; place-items: center; text-align: center; font-size: 26px; color: #fff; background: rgba(4, 7, 11, .55); z-index: 6; pointer-events: none; }
+#checklist h3 { cursor: pointer; }
+#checklist.collapsed div { display: none; }
+
+@media (max-width: 1000px) { #hint { display: none; } #checklist { width: 190px; } }

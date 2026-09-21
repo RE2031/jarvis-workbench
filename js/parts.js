@@ -46,6 +46,7 @@ function plateGrid({ length, width }) {
 export const CATALOG = {
   wheel: {
     name: 'Wheel',
+    real: '65–100 mm rubber robot wheel with motor hub',
     defaults: { diameter: 10, width: 4 },
     label: (p, s) => `Wheel  Ø${f(p.diameter * s)} × ${f(p.width * s)} cm`,
     ports: (p) => [port('hub', 'hub', [0, 0, -c(p.width) / 2], [0, 0, -1], [1, 0, 0])],
@@ -86,6 +87,7 @@ export const CATALOG = {
 
   motor: {
     name: 'Motor',
+    real: '6 V geared DC motor (TT / N20 class)',
     defaults: { diameter: 3.5, length: 6 },
     label: (p, s) => `Motor  Ø${f(p.diameter * s)} × ${f(p.length * s)} cm`,
     ports: (p) => [
@@ -113,6 +115,7 @@ export const CATALOG = {
 
   servo: {
     name: 'Servo',
+    real: 'MG996R / SG90 hobby servo',
     defaults: { length: 4, width: 2, height: 3.6 },
     label: (p, s) => `Servo  ${f(p.length * s)} × ${f(p.width * s)} × ${f(p.height * s)} cm`,
     build({ length, width, height }) {
@@ -136,6 +139,7 @@ export const CATALOG = {
 
   plate: {
     name: 'Chassis plate',
+    real: '3 mm acrylic or aluminium plate, drilled on a 2 cm grid',
     defaults: { length: 20, width: 12, thickness: 0.6 },
     label: (p, s) => `Plate  ${f(p.length * s)} × ${f(p.width * s)} × ${f(p.thickness * s)} cm`,
     ports(p) {
@@ -165,6 +169,7 @@ export const CATALOG = {
 
   beam: {
     name: 'Frame beam',
+    real: '2020 aluminium extrusion',
     defaults: { length: 15, size: 2 },
     label: (p, s) => `Beam  ${f(p.length * s)} cm  (${f(p.size * s)} × ${f(p.size * s)})`,
     build({ length, size }) {
@@ -184,6 +189,7 @@ export const CATALOG = {
 
   link: {
     name: 'Arm link',
+    real: '3 mm aluminium bracket',
     defaults: { length: 12, width: 2.4, thickness: 0.8 },
     label: (p, s) => `Arm link  ${f(p.length * s)} × ${f(p.width * s)} cm`,
     build({ length, width, thickness }) {
@@ -204,6 +210,7 @@ export const CATALOG = {
 
   joint: {
     name: 'Joint',
+    real: 'Servo bracket + bearing pin',
     defaults: { diameter: 3.6, width: 3.2 },
     label: (p, s) => `Joint  Ø${f(p.diameter * s)} × ${f(p.width * s)} cm`,
     build({ diameter, width }) {
@@ -223,6 +230,7 @@ export const CATALOG = {
   // ---- rover electronics & support -------------------------------------------------------------
   caster: {
     name: 'Ball caster',
+    real: 'Ball caster, 25 mm',
     defaults: { height: 2.65, ball: 1.6 },
     label: (p, s) => `Caster  h${f(p.height * s)} cm`,
     ports: (p) => [port('top', 'caster-top', [0, 0, c(p.height) / 2], [0, 0, 1], [1, 0, 0])],
@@ -241,6 +249,7 @@ export const CATALOG = {
 
   battery: {
     name: 'Battery pack',
+    real: '4×AA battery holder (6 V)',
     defaults: { length: 6.2, width: 5.6, height: 1.7, voltage: 6 },
     label: (p, s) => `Battery  ${f(p.voltage)}V  ${f(p.length * s)} × ${f(p.width * s)} cm`,
     ports: (p) => [port('base', 'comp-base', [0, 0, -c(p.height) / 2], [0, 0, -1], [1, 0, 0])],
@@ -264,6 +273,7 @@ export const CATALOG = {
 
   controller: {
     name: 'Controller',
+    real: 'Arduino Uno-class board',
     defaults: { length: 6.9, width: 5.3, height: 1.4 },
     label: (p, s) => `Controller  ${f(p.length * s)} × ${f(p.width * s)} cm`,
     ports: (p) => [port('base', 'comp-base', [0, 0, -c(p.height) / 2], [0, 0, -1], [1, 0, 0])],
@@ -283,6 +293,7 @@ export const CATALOG = {
 
   driver: {
     name: 'Motor driver',
+    real: 'L298N dual H-bridge module',
     defaults: { length: 4.3, width: 4.3, height: 2.7 },
     label: (p, s) => `Driver  ${f(p.length * s)} × ${f(p.width * s)} cm`,
     ports: (p) => [port('base', 'comp-base', [0, 0, -c(p.height) / 2], [0, 0, -1], [1, 0, 0])],
@@ -302,6 +313,7 @@ export const CATALOG = {
 
   sonar: {
     name: 'Ultrasonic sensor',
+    real: 'HC-SR04 ultrasonic distance sensor',
     defaults: { width: 4.5, height: 2 },
     label: (p, s) => `Sonar  ${f(p.width * s)} × ${f(p.height * s)} cm`,
     ports: (p) => [port('base', 'comp-base', [0, 0, -c(p.height) / 2], [0, 0, -1], [1, 0, 0], true)],
@@ -345,7 +357,7 @@ export function createPart(type, overrides = {}) {
 
   const materials = new Set();
   const part = {
-    id: ++uid, type, params, group, radius, localBox, userScale: 1, heldBy: null, lift: 0,
+    id: ++uid, type, name: def.name, params, group, radius, localBox, userScale: 1, heldBy: null, lift: 0,
     ports: def.ports ? def.ports(params) : [],
     phys: def.phys ? def.phys(params) : { mass: 0.05 },
     label: () => def.label(params, part.userScale),

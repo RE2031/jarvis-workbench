@@ -18,14 +18,24 @@
       <span class="pill" id="st-fps">– fps</span>
     </div>
     <div class="tools">
-      <label><input type="checkbox" id="opt-overlay" checked> hand overlay</label>
+      <button id="btn-undo" title="Undo (Ctrl+Z)">↶</button>
+      <button id="btn-redo" title="Redo (Ctrl+Y)">↷</button>
       <button id="btn-clear">Clear all</button>
-      <button id="btn-sim" class="primary">▶ Simulate</button>
+      <button id="btn-tree" class="toggle" title="Scene hierarchy">Scene</button>
+      <button id="btn-insp" class="toggle" title="Object properties">Properties</button>
+      <button id="btn-sim" class="primary">▶ Start simulation</button>
+      <button id="btn-stop" class="primary stop">■ Stop simulation</button>
+      <button id="btn-settings" title="Settings">⚙</button>
+      <button id="btn-help" title="Help (?)">?</button>
     </div>
   </header>
 
   <main id="workspace">
-    <div id="stage">
+    <aside id="tree" class="dock">
+      <div class="dock-head">SCENE HIERARCHY</div>
+      <div id="tree-body"></div>
+    </aside>
+    <div id="center"><div id="stage">
       <video id="cam" playsinline muted></video>
       <div id="gl"></div>
       <canvas id="fx"></canvas>
@@ -34,14 +44,71 @@
       <div id="partLabel"></div>
       <aside id="checklist"></aside>
       <div id="simhud"></div>
+      <div id="toasts"></div>
+      <div id="calib"></div>
       <div id="hint">
-        <b>Pinch</b> (thumb + index) to grab · <b>move</b> to drag · <b>twist wrist</b> to rotate ·
-        <b>two hands</b> = scale · bring parts close to <b>snap</b> · grab a bolted part to <b>pull it off</b>.&nbsp; Mouse: drag · wheel = scale · shift+wheel = rotate
+        <b>Pinch</b> to grab · <b>move</b> to drag · <b>turn your hand</b> to rotate ·
+        <b>two hands</b> = scale · bring parts close and they <b>snap</b> · pull firmly to <b>detach</b>.&nbsp;
+        Mouse: drag · wheel = scale · shift+wheel = twist · right-drag = rotate
       </div>
-    </div>
+    </div></div>
+    <aside id="inspector" class="dock">
+      <div class="dock-head">OBJECT PROPERTIES</div>
+      <div id="insp-body"></div>
+    </aside>
   </main>
 
-  <div id="splash">
+  <aside id="settings" hidden>
+    <div class="row head"><b>Settings</b><button class="x" data-close="settings">✕</button></div>
+
+    <h3>Pinch</h3>
+    <div id="meter"><small>Show a hand to the camera to see the live pinch meter.</small></div>
+    <label>Pinch starts below <output id="o-pinchOn"></output>
+      <input type="range" id="s-pinchOn" min="0.08" max="0.6" step="0.01"></label>
+    <label>Pinch releases above <output id="o-pinchOff"></output>
+      <input type="range" id="s-pinchOff" min="0.15" max="0.9" step="0.01"></label>
+    <button id="btn-calibrate" class="ghost">Calibrate pinch (5 s)</button>
+
+    <h3>Motion</h3>
+    <label>Responsiveness <output id="o-responsive"></output>
+      <input type="range" id="s-responsive" min="0.1" max="0.8" step="0.01"></label>
+    <label class="check"><input type="checkbox" id="s-rot3d"> Rotate with full 3D hand orientation</label>
+    <label>Rotation sensitivity <output id="o-rotSens"></output>
+      <input type="range" id="s-rotSens" min="0.5" max="2" step="0.05"></label>
+
+    <h3>Display</h3>
+    <label class="check"><input type="checkbox" id="s-overlay"> Hand skeleton overlay</label>
+    <label class="check"><input type="checkbox" id="s-sound"> Sound cues</label>
+
+    <h3>Design</h3>
+    <div class="row wrap">
+      <button id="btn-save" class="ghost">Save file</button>
+      <button id="btn-load" class="ghost">Load file</button>
+      <button id="btn-bom" class="ghost">Export parts list</button>
+      <button id="btn-reset" class="ghost">Reset settings</button>
+    </div>
+    <input type="file" id="file-load" accept="application/json,.json" hidden>
+    <p class="small">Your design autosaves in this browser.</p>
+  </aside>
+
+  <div id="help" class="modal" hidden>
+    <div class="card">
+      <h2>How to build</h2>
+      <ul>
+        <li><b>Grab</b> — pinch thumb + index over a part. Pinch a palette item to pull out a new one.</li>
+        <li><b>Move / turn</b> — move your hand to drag; rotate your hand to rotate the part in 3D.</li>
+        <li><b>Resize</b> — hold a loose part and pinch with your other hand, then spread or close them.</li>
+        <li><b>Snap</b> — bring parts close: dots show where they fit, the part is pulled in and locks (green dot).</li>
+        <li><b>Detach</b> — pinch a bolted-on part and pull firmly away.</li>
+        <li><b>Delete</b> — drop it on the trash, or hover it and press Delete.</li>
+        <li><b>Simulate</b> — when the checklist is green, press ▶ Simulate and drive it.</li>
+      </ul>
+      <p class="small">Shortcuts: Ctrl+Z undo · Ctrl+Y redo · Delete remove · ? help · Esc close. Pinch feels off? Open ⚙ and try Calibrate.</p>
+      <button data-close="help">Got it</button>
+    </div>
+  </div>
+
+  <div id="splash" class="modal">
     <div class="card">
       <h2>JARVIS workbench</h2>
       <p>Build robot hardware with your hands. Pick parts from the left panel by pinching them, then drag, rotate and resize them in front of the camera.</p>

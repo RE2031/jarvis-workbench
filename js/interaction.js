@@ -1,11 +1,12 @@
 import * as THREE from 'three';
-import { createPart, partOf, portsCompatible } from './parts.js';
+import { createPart, partOf, portsCompatible, PX_PER_CM } from './parts.js';
+import { settings } from './settings.js';
 
-const PINCH_ON = 0.28;   // thumb-index gap / palm size below which a pinch starts
-const PINCH_OFF = 0.45;  // ...and above which it ends (hysteresis)
 const LOST_MS = 250;     // tracking dropout tolerated before a hand's grip is released
 const MIN_SCALE = 0.25, MAX_SCALE = 4;
 const ROLL_DEADZONE = 0.1;
+const ROT_DEADZONE = 0.09; // rad of hand rotation ignored before a held part starts turning
+const HISTORY_MAX = 60;
 // Magnet ranges (world px). Wheel<->motor and motor<->chassis pull in from further away and lock harder.
 const STRONG_KINDS = new Set(['hub', 'shaft', 'motor-base', 'deck-edge']);
 const magnetRange = (kind) => (STRONG_KINDS.has(kind) ? 110 : 70);
@@ -42,6 +43,8 @@ export class Interaction {
     this.hands = new Map();
     this.scale = null;     // active two-hand scale gesture
     this.focus = null;     // part to annotate in the HUD
+    this.selected = null;  // part shown in the properties panel
+    this.selRev = 0;
     this.ray = new THREE.Raycaster();
 
     this.marker = new THREE.Mesh(
@@ -51,6 +54,219 @@ export class Interaction {
     this.marker.renderOrder = 10;
     this.marker.visible = false;
     ctx.scene.add(this.marker);
+
+    // Faint dots on every free port the held part could snap onto.
+    this.ghostPos = new Float32Array(3 * 300);
+    const gg = new THREE.BufferGeometry();
+    gg.setAttribute('position', new THREE.BufferAttribute(this.ghostPos, 3));
+    gg.setDrawRange(0, 0);
+    this.ghost = new THREE.Points(gg, new THREE.PointsMaterial({
+      color: 0x4de1ff, size: 7, sizeAttenuation: false, transparent: true, opacity: 0.75, depthTest: false,
+    }));
+    this.ghost.frustumCulled = false;
+    this.ghost.renderOrder = 9;
+    ctx.scene.add(this.ghost);
+
+    this.history = [];
+    this.hIdx = -1;
+    this.commit();
+  }
+
+  _note(msg, sound) {
+    this.ui.notify?.(msg);
+    if (sound) this.ui.sfx?.(sound);
+  }
+
+  // ---- history / persistence ---------------------------------------------------
+
+  serialize() {
+    return {
+      v: 1,
+      parts: this.parts.map((p) => ({
+        id: p.id, type: p.type, params: p.params, scale: p.userScale,
+        pos: [p.group.position.x, p.group.position.y, p.group.position.z - p.lift],
+        quat: p.group.quaternion.toArray(),
+      })),
+      conns: this.connections.map((c) => ({ a: c.a.id, pa: c.pa, b: c.b.id, pb: c.pb })),
+    };
+  }
+
+  restore(state) {
+    for (const h of this.hands.values()) { h.held = null; h.members = []; h.lock = false; h.role = null; }
+    this.scale = null;
+    [...this.parts].forEach((p) => this.remove(p));
+    const byId = new Map();
+    for (const d of state.parts) {
+      const part = createPart(d.type, d.params);
+      part.group.position.set(...d.pos);
+      part.group.quaternion.fromArray(d.quat);
+      part.userScale = d.scale;
+      part.group.scale.setScalar(d.scale);
+      this.ctx.scene.add(part.group);
+      this.parts.push(part);
+      byId.set(d.id, part);
+    }
+    this.connections = state.conns.filter((c) => byId.has(c.a) && byId.has(c.b))
+      .map((c) => ({ a: byId.get(c.a), pa: c.pa, b: byId.get(c.b), pb: c.pb }));
+    this.rev++;
+  }
+
+  /** Record the current state as an undo step (no-op if nothing changed). */
+  commit() {
+    const json = JSON.stringify(this.serialize());
+    if (this.history[this.hIdx] === json) return;
+    this.history.length = this.hIdx + 1;
+    this.history.push(json);
+    if (this.history.length > HISTORY_MAX) this.history.shift();
+    this.hIdx = this.history.length - 1;
+    this.ui.onCommit?.(json);
+  }
+
+  undo() {
+    if (this.hIdx <= 0) return false;
+    this.restore(JSON.parse(this.history[--this.hIdx]));
+    this.ui.onCommit?.(this.history[this.hIdx]);
+    return true;
+  }
+
+  redo() {
+    if (this.hIdx >= this.history.length - 1) return false;
+    this.restore(JSON.parse(this.history[++this.hIdx]));
+    this.ui.onCommit?.(this.history[this.hIdx]);
+    return true;
+  }
+
+  load(state) { this.restore(state); this.commit(); }
+
+  // ---- editor API (scene hierarchy / properties panel) ---------------------------------
+
+  select(part) {
+    if (this.selected === part) return;
+    this.selected = part;
+    this.selRev++;
+  }
+
+  /** Scene tree: each chassis (or loose part) with the parts bolted to it nested underneath. */
+  hierarchy() {
+    const seen = new Set(), roots = [];
+    const build = (p) => {
+      seen.add(p);
+      const node = { part: p, children: [] };
+      for (const cn of this.connections) {
+        const y = cn.a === p ? cn.b : cn.b === p ? cn.a : null;
+        if (y && !seen.has(y)) node.children.push(build(y));
+      }
+      return node;
+    };
+    const ordered = [...this.parts].sort((a, b) => (b.type === 'plate') - (a.type === 'plate'));
+    for (const p of ordered) if (!seen.has(p)) roots.push(build(p));
+    return roots;
+  }
+
+  /** Numeric pose of a part: position in cm, XYZ rotation in degrees. */
+  poseOf(part) {
+    const g = part.group;
+    const e = new THREE.Euler().setFromQuaternion(g.quaternion, 'XYZ');
+    return {
+      pos: [g.position.x / PX_PER_CM, g.position.y / PX_PER_CM, (g.position.z - part.lift) / PX_PER_CM],
+      rot: [e.x, e.y, e.z].map((v) => (v * 180) / Math.PI),
+    };
+  }
+
+  /** Set a part's pose numerically; a bolted-on part is pulled off first, and carries its own sub-assembly. */
+  setPose(part, { pos, rot }) {
+    this._pullOff(part);
+    const members = this.assemblyOf(part), g = part.group;
+    const oldPos = g.position.clone(), oldQ = g.quaternion.clone();
+    const newPos = pos ? new THREE.Vector3(pos[0] * PX_PER_CM, pos[1] * PX_PER_CM, pos[2] * PX_PER_CM + part.lift) : oldPos.clone();
+    const newQ = rot ? new THREE.Quaternion().setFromEuler(new THREE.Euler(...rot.map((d) => (d * Math.PI) / 180), 'XYZ')) : oldQ.clone();
+    const dq = newQ.clone().multiply(oldQ.invert());
+    for (const m of members) {
+      if (m === part) continue;
+      m.group.position.sub(oldPos).applyQuaternion(dq).add(newPos);
+      m.group.quaternion.premultiply(dq);
+    }
+    g.position.copy(newPos);
+    g.quaternion.copy(newQ);
+    this.rev++;
+    this.commit();
+  }
+
+  setScale(part, s) {
+    if (this.assemblyOf(part).length > 1) { this._note('Detach the part before resizing it', 'error'); return; }
+    part.userScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
+    part.group.scale.setScalar(part.userScale);
+    this.rev++;
+    this.commit();
+  }
+
+  /** Rebuild a parametric part with new dimensions, keeping its pose and connections. */
+  setParams(part, overrides) {
+    if (this.hands.size && [...this.hands.values()].some((h) => h.members.includes(part))) return part;
+    const np = createPart(part.type, { ...part.params, ...overrides });
+    np.group.position.copy(part.group.position);
+    np.group.quaternion.copy(part.group.quaternion);
+    np.userScale = part.userScale;
+    np.group.scale.setScalar(part.userScale);
+    np.lift = part.lift;
+    this.ctx.scene.add(np.group);
+    this.parts[this.parts.indexOf(part)] = np;
+    const has = (p, name) => p.ports.some((q) => q.name === name);
+    this.connections = this.connections
+      .map((c) => ({ a: c.a === part ? np : c.a, pa: c.pa, b: c.b === part ? np : c.b, pb: c.pb }))
+      .filter((c) => has(c.a, c.pa) && has(c.b, c.pb));
+    this.ctx.scene.remove(part.group);
+    part.dispose();
+    if (this.selected === part) this.selected = np;
+    if (this.focus === part) this.focus = null;
+    this._reflow(np);
+    this.rev++;
+    this.selRev++;
+    this.commit();
+    return np;
+  }
+
+  // After a part changed shape, re-seat everything bolted to it (outwards from the chassis).
+  _reflow(changed) {
+    const comp = this.assemblyOf(changed);
+    const anchor = comp.find((p) => p.type === 'plate') ?? changed;
+    const seen = new Set([anchor]), queue = [anchor];
+    while (queue.length) {
+      const x = queue.shift();
+      for (const cn of this.connections) {
+        let y, px, py;
+        if (cn.a === x) { y = cn.b; px = cn.pa; py = cn.pb; }
+        else if (cn.b === x) { y = cn.a; px = cn.pb; py = cn.pa; }
+        else continue;
+        if (seen.has(y)) continue;
+        seen.add(y);
+        queue.push(y);
+        x.group.updateMatrixWorld(true);
+        y.group.updateMatrixWorld(true);
+        const pp = y.ports.find((q) => q.name === py), tp = x.ports.find((q) => q.name === px);
+        this._align([y], { pp, r: x, tp, P: portPose(y, pp), T: portPose(x, tp) }, 1);
+      }
+    }
+  }
+
+  duplicate(part) {
+    const c = this.spawn(part.type, part.params);
+    c.userScale = part.userScale;
+    c.group.scale.setScalar(part.userScale);
+    c.group.quaternion.copy(part.group.quaternion);
+    c.group.position.set(part.group.position.x + 40, part.group.position.y - 40, 0);
+    this.select(c);
+    this.commit();
+    return c;
+  }
+
+  deleteFocus() {
+    const part = this.focus;
+    if (!part) return false;
+    this.remove(part);
+    this._note(`Deleted ${part.name}`, 'delete');
+    this.commit();
+    return true;
   }
 
   // ---- parts & assemblies -----------------------------------------------------
@@ -78,10 +294,11 @@ export class Interaction {
     part.dispose();
     this.parts.splice(this.parts.indexOf(part), 1);
     if (this.focus === part) this.focus = null;
+    if (this.selected === part) { this.selected = null; this.selRev++; }
     this.rev++;
   }
 
-  clear() { [...this.parts].forEach((p) => this.remove(p)); }
+  clear() { [...this.parts].forEach((p) => this.remove(p)); this.commit(); }
 
   /** All parts connected (directly or not) to `part`, including itself. */
   assemblyOf(part) {
@@ -114,6 +331,7 @@ export class Interaction {
     while (cur !== part) { const p = prev.get(cur); edge = p.cn; cur = p.from; }
     this.connections.splice(this.connections.indexOf(edge), 1);
     this.rev++;
+    this._note(`Pulled ${part.name} off`, 'pull');
   }
 
   // Raycast at (x, y) in stage px, retrying on a small ring so a pinch doesn't need to be pixel-exact.
@@ -166,6 +384,7 @@ export class Interaction {
     this._align(members, snap, 1);
     this.connections.push({ a: snap.q, pa: snap.pp.name, b: snap.r, pb: snap.tp.name });
     this.rev++;
+    this._note(`Attached ${snap.q.name} → ${snap.r.name}`, 'snap');
   }
 
   // Move `members` a fraction `f` of the way to the pose where the two ports coincide (f = 1: exactly aligned).
@@ -190,12 +409,40 @@ export class Interaction {
     }
   }
 
+  // Show every free compatible port near the held part, so it's obvious where it can go.
+  _updateGhosts() {
+    let h = null;
+    for (const o of this.hands.values()) if (o.held && o.pinching) { h = o; break; }
+    if (!h) { this.ghost.geometry.setDrawRange(0, 0); return; }
+    const mine = new Set(h.members), busy = new Set();
+    for (const o of this.hands.values()) if (o.held) o.members.forEach((m) => busy.add(m));
+    const used = new Set(this.connections.flatMap((cn) => [`${cn.a.id}:${cn.pa}`, `${cn.b.id}:${cn.pb}`]));
+    const kinds = [];
+    for (const q of h.members) for (const pp of q.ports) if (!used.has(`${q.id}:${pp.name}`)) kinds.push(pp.kind);
+    const centre = h.held.group.position, v = new THREE.Vector3();
+    let n = 0;
+    for (const r of this.parts) {
+      if (mine.has(r) || busy.has(r)) continue;
+      r.group.updateMatrixWorld(true);
+      for (const tp of r.ports) {
+        if (n >= 300 || used.has(`${r.id}:${tp.name}`) || !kinds.some((k) => portsCompatible(k, tp.kind))) continue;
+        v.set(...tp.pos).applyMatrix4(r.group.matrixWorld);
+        if (v.distanceTo(centre) > 260) continue;
+        v.toArray(this.ghostPos, n * 3);
+        n++;
+      }
+    }
+    this.ghost.geometry.attributes.position.needsUpdate = true;
+    this.ghost.geometry.setDrawRange(0, n);
+  }
+
   // While a part is dragged: pull it towards a compatible port, and lock it on when it gets close.
   _magnet(h) {
     if (this.ui.overTrash(h.x, h.y)) { h.lock = false; return null; }
     const snap = this.findSnap(h.members);
     if (!snap) { h.lock = false; return null; }
     if (h.lock || snap.d < LOCK_FRAC * snap.range) {
+      if (!h.lock) this.ui.sfx?.('lock');
       h.lock = true;
       h.lockRange = snap.range;
       this._align(h.members, snap, 1);
@@ -212,7 +459,8 @@ export class Interaction {
       id, virtual: false, present: false, init: false, lastSeen: 0,
       x: 0, y: 0, ratio: 1, landmarks: null,
       lastRoll: 0, rollAccum: 0, rollS: 0, rollBase: 0,
-      pinching: false, held: null, members: [], offset: { x: 0, y: 0 }, quatBase: new THREE.Quaternion(), role: null,
+      pinching: false, flip: 0, held: null, members: [], offset: { x: 0, y: 0 }, quatBase: new THREE.Quaternion(), role: null,
+      orientQ: null, orientBase: null,
     };
     this.hands.set(id, h);
     return h;
@@ -232,15 +480,25 @@ export class Interaction {
         h.x = fh.x; h.y = fh.y; h.lastRoll = fh.roll; h.rollAccum = fh.roll; h.rollS = fh.roll; h.init = true;
       } else {
         // Adaptive smoothing: steady when slow (kills jitter), responsive when fast.
-        const a = Math.min(0.9, 0.35 + Math.hypot(fh.x - h.x, fh.y - h.y) / 80);
+        const a = Math.min(0.9, settings.responsive + Math.hypot(fh.x - h.x, fh.y - h.y) / 80);
         h.x += (fh.x - h.x) * a;
         h.y += (fh.y - h.y) * a;
         h.rollAccum += wrapPi(fh.roll - h.lastRoll);
         h.lastRoll = fh.roll;
         h.rollS += (h.rollAccum - h.rollS) * 0.35;
       }
-      const want = h.pinching ? fh.ratio < PINCH_OFF : fh.ratio < PINCH_ON;
-      if (want !== h.pinching) this._setPinch(h, want);
+      if (fh.orient) {
+        const q = new THREE.Quaternion().fromArray(fh.orient);
+        if (!h.orientQ) h.orientQ = q;
+        else {
+          if (h.orientQ.dot(q) < 0) q.set(-q.x, -q.y, -q.z, -q.w); // keep the shortest path
+          h.orientQ.slerp(q, 0.4);
+        }
+      } else h.orientQ = null;
+      // Two consecutive frames must agree before a pinch flips: kills single-frame flicker.
+      const want = h.pinching ? fh.ratio < settings.pinchOff : fh.ratio < settings.pinchOn;
+      if (want === h.pinching) h.flip = 0;
+      else if (++h.flip >= 2) { h.flip = 0; this._setPinch(h, want); }
     }
 
     for (const [id, h] of this.hands) {
@@ -290,6 +548,8 @@ export class Interaction {
 
     const part = this.pick(h.x, h.y);
     const other = [...this.hands.values()].find((o) => o !== h && o.pinching && o.held);
+    if (part) this.select(part);
+    else if (!other) this.select(null);
     if (part) {
       const holder = this._holderOf(part);
       if (!holder) this._grab(h, part, true);
@@ -309,12 +569,14 @@ export class Interaction {
       this._detach(s.a);
       if (s.b.pinching) this._grab(s.b, s.part, false); // scaler takes over
       else this._dropped(members, h);
+      this.commit();
       return;
     }
     if (h.held) {
       const members = h.members;
       this._detach(h);
       this._dropped(members, h);
+      this.commit();
     }
   }
 
@@ -323,10 +585,12 @@ export class Interaction {
     if (pull) this._pullOff(part);
     const wp = this.ctx.toWorld(h.x, h.y);
     h.held = part;
+    this.select(part);
     h.members = this.assemblyOf(part);
     part.heldBy = h;
     h.offset = { x: part.group.position.x - wp.x, y: part.group.position.y - wp.y };
     h.rollBase = h.rollS;
+    h.orientBase = h.orientQ ? h.orientQ.clone() : null;
     h.quatBase.copy(part.group.quaternion);
   }
 
@@ -337,7 +601,13 @@ export class Interaction {
   }
 
   _dropped(members, h) {
-    if (this.ui.overTrash(h.x, h.y)) { members.forEach((m) => this.remove(m)); return; }
+    if (this.ui.overTrash(h.x, h.y)) {
+      const n = members.length;
+      const label = n > 1 ? `${n} parts` : members[0].name;
+      members.forEach((m) => this.remove(m));
+      this._note(`Deleted ${label}`, 'delete');
+      return;
+    }
     const snap = this.findSnap(members);
     if (snap) this._applySnap(members, snap);
   }
@@ -396,6 +666,7 @@ export class Interaction {
     }
     this.ui.setPaletteHot(hot);
     this.ui.setTrashArmed(trashArmed);
+    this._updateGhosts();
     this.marker.visible = !!snapPreview;
     if (snapPreview) {
       this.marker.position.copy(snapPreview.T.pos);
@@ -411,12 +682,41 @@ export class Interaction {
       if (!h.lock) h.members.forEach((m) => lifted.add(m)); // a magnet-locked part sits flush, not lifted
     }
     for (const p of this.parts) {
-      p.setGlow(lifted.has(p) || p === hover ? 1 : 0);
+      p.setGlow(lifted.has(p) || p === hover ? 1 : p === this.selected ? 0.5 : 0);
       const d = ((lifted.has(p) ? LIFT : 0) - p.lift) * 0.25; // lift the whole assembly while held
       p.lift += d;
       p.group.position.z += d;
     }
     this.focus = held ?? hover;
+  }
+
+  // World-space rotation the hand has made since the grab: full 3D palm orientation when available
+  // (with a dead-zone so a resting hand doesn't jitter the part), else just the wrist twist about z.
+  _handRotation(h) {
+    if (settings.rot3d && h.orientQ && h.orientBase) {
+      const d = h.orientQ.clone().multiply(h.orientBase.clone().invert());
+      if (d.w < 0) d.set(-d.x, -d.y, -d.z, -d.w);
+      const angle = 2 * Math.acos(Math.min(1, d.w)) * settings.rotSens;
+      const sin = Math.sqrt(Math.max(1e-12, 1 - d.w * d.w));
+      const eff = angle - ROT_DEADZONE;
+      if (eff <= 0) return new THREE.Quaternion();
+      return new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(d.x / sin, d.y / sin, d.z / sin), eff);
+    }
+    return new THREE.Quaternion().setFromAxisAngle(Z_AXIS, deadzone(h.rollS - h.rollBase, ROLL_DEADZONE) * settings.rotSens);
+  }
+
+  /** Mouse trackball: rotate the held (or hovered) part, with everything bolted to it, about the screen axes. */
+  mouseRotate(dx, dy) {
+    const h = this.hands.get('mouse');
+    const part = h?.held ?? (h ? this.pick(h.x, h.y) : null);
+    if (!part) return;
+    const dq = new THREE.Quaternion().setFromEuler(new THREE.Euler(dy * 0.009, dx * 0.009, 0));
+    const pivot = part.group.position.clone();
+    for (const m of this.assemblyOf(part)) {
+      m.group.position.sub(pivot).applyQuaternion(dq).add(pivot);
+      m.group.quaternion.premultiply(dq);
+    }
+    if (h.held) h.quatBase.premultiply(dq); // keep hand-twist relative to the new pose
   }
 
   // Move the held part towards the hand, carrying its assembly along rigidly around the held part.
@@ -433,7 +733,7 @@ export class Interaction {
       oldPos.y + (wp.y + h.offset.y - oldPos.y) * 0.7,
       oldPos.z,
     );
-    const targetQ = new THREE.Quaternion().setFromAxisAngle(Z_AXIS, deadzone(h.rollS - h.rollBase, ROLL_DEADZONE)).multiply(h.quatBase);
+    const targetQ = this._handRotation(h).multiply(h.quatBase);
     const dq = targetQ.clone().multiply(oldQ.invert());
     for (const m of h.members) {
       if (m === h.held) continue;
