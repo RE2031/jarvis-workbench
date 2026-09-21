@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis Workbench</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three/three.module.js", "three/addons/": "./vendor/three/addons/" } }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>JARVIS <span>workbench</span></h1>
+    <div class="pills">
+      <span class="pill" id="st-cam">camera: off</span>
+      <span class="pill" id="st-hands">hands: 0</span>
+      <span class="pill" id="st-fps">– fps</span>
+    </div>
+    <div class="tools">
+      <label><input type="checkbox" id="opt-overlay" checked> hand overlay</label>
+      <button id="btn-clear">Clear all</button>
+    </div>
+  </header>
+
+  <main id="workspace">
+    <div id="stage">
+      <video id="cam" playsinline muted></video>
+      <div id="gl"></div>
+      <canvas id="fx"></canvas>
+      <aside id="palette"></aside>
+      <div id="trash">Drop here<br>to delete</div>
+      <div id="partLabel"></div>
+      <div id="hint">
+        <b>Pinch</b> (thumb + index) to grab · <b>move</b> to drag · <b>twist wrist</b> to rotate ·
+        <b>two hands</b> pinching = scale.&nbsp; Mouse: drag · wheel = scale · shift+wheel = rotate
+      </div>
+    </div>
+  </main>
+
+  <div id="splash">
+    <div class="card">
+      <h2>JARVIS workbench</h2>
+      <p>Build robot hardware with your hands. Pick parts from the left panel by pinching them, then drag, rotate and resize them in front of the camera.</p>
+      <p class="small">Video never leaves your computer — hand tracking runs locally in the browser.</p>
+      <button id="btn-start">Start camera</button>
+      <button id="btn-mouse" class="ghost">Continue without camera (mouse)</button>
+      <p id="splash-msg" class="small err"></p>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
