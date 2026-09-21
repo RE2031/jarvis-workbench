@@ -12,8 +12,8 @@ Double-click `serve.bat` (or `python -m http.server 8000`) and open http://local
 | Rotate | twist wrist while pinching | shift + wheel |
 | Scale a loose part | pinch with both hands and spread / close | wheel |
 | Spawn | pinch a palette item | click it |
-| Snap together | bring compatible parts close; a cyan dot shows the target, release to lock | same |
-| Pull a part off | grab a part that is bolted on (it takes whatever hangs off it) | same |
+| Snap together (magnetic) | bring compatible parts close: they are pulled in and lock with a green dot; wheel↔motor and motor↔chassis pull from furthest away | same |
+| Pull a part off | grab a part that is bolted on and pull firmly away (it takes whatever hangs off it) | same |
 | Delete | drop the part / assembly on the trash zone | same |
 
 ## Building a rover

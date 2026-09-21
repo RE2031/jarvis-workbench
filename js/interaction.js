@@ -6,7 +6,10 @@ const PINCH_OFF = 0.45;  // ...and above which it ends (hysteresis)
 const LOST_MS = 250;     // tracking dropout tolerated before a hand's grip is released
 const MIN_SCALE = 0.25, MAX_SCALE = 4;
 const ROLL_DEADZONE = 0.1;
-const SNAP_DIST = 45;    // world px between two ports that will snap
+// Magnet ranges (world px). Wheel<->motor and motor<->chassis pull in from further away and lock harder.
+const STRONG_KINDS = new Set(['hub', 'shaft', 'motor-base', 'deck-edge']);
+const magnetRange = (kind) => (STRONG_KINDS.has(kind) ? 110 : 70);
+const LOCK_FRAC = 0.4;   // inside this fraction of the range the part locks onto the port
 const LIFT = 40;         // z lift while held
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
 
@@ -150,7 +153,8 @@ export class Interaction {
             P ??= portPose(q, pp);
             const T = portPose(r, tp);
             const d = P.pos.distanceTo(T.pos);
-            if (d < SNAP_DIST && (!best || d < best.d)) best = { d, q, pp, r, tp, P, T };
+            const range = magnetRange(pp.kind);
+            if (d < range && (!best || d / range < best.d / best.range)) best = { d, range, q, pp, r, tp, P, T };
           }
         }
       }
@@ -158,7 +162,14 @@ export class Interaction {
     return best;
   }
 
-  _applySnap(members, { q, pp, r, tp, P, T }) {
+  _applySnap(members, snap) {
+    this._align(members, snap, 1);
+    this.connections.push({ a: snap.q, pa: snap.pp.name, b: snap.r, pb: snap.tp.name });
+    this.rev++;
+  }
+
+  // Move `members` a fraction `f` of the way to the pose where the two ports coincide (f = 1: exactly aligned).
+  _align(members, { pp, r, tp, P, T }, f) {
     const strict = pp.strict || tp.strict;
     const nT = T.n.clone().negate();
     const bp = basis(P.n, P.h).transpose();
@@ -170,14 +181,28 @@ export class Interaction {
       const angle = 2 * Math.acos(Math.min(1, Math.abs(rq.w)));
       if (angle < bestAngle) { bestAngle = angle; bestQ = rq; }
     }
-    const shift = T.pos.clone().sub(P.pos);
+    const shift = T.pos.clone().sub(P.pos).multiplyScalar(f);
+    const rot = new THREE.Quaternion().slerp(bestQ, f);
     for (const m of members) {
-      m.group.position.sub(P.pos).applyQuaternion(bestQ).add(P.pos).add(shift);
-      m.group.quaternion.premultiply(bestQ);
-      m.lift = r.lift;
+      m.group.position.sub(P.pos).applyQuaternion(rot).add(P.pos).add(shift);
+      m.group.quaternion.premultiply(rot);
+      if (f === 1) m.lift = r.lift;
     }
-    this.connections.push({ a: q, pa: pp.name, b: r, pb: tp.name });
-    this.rev++;
+  }
+
+  // While a part is dragged: pull it towards a compatible port, and lock it on when it gets close.
+  _magnet(h) {
+    if (this.ui.overTrash(h.x, h.y)) { h.lock = false; return null; }
+    const snap = this.findSnap(h.members);
+    if (!snap) { h.lock = false; return null; }
+    if (h.lock || snap.d < LOCK_FRAC * snap.range) {
+      h.lock = true;
+      h.lockRange = snap.range;
+      this._align(h.members, snap, 1);
+    } else {
+      this._align(h.members, snap, 0.25 + 0.5 * (1 - snap.d / snap.range));
+    }
+    return snap;
   }
 
   // ---- input ---------------------------------------------------------------------
@@ -308,6 +333,7 @@ export class Interaction {
   _detach(h) {
     if (h.held?.heldBy === h) h.held.heldBy = null;
     h.held = null;
+    h.lock = false;
   }
 
   _dropped(members, h) {
@@ -357,11 +383,12 @@ export class Interaction {
       if (h.virtual) h.rollS = h.rollAccum;
       if (!h.present) continue;
 
-      if (h.pinching && h.held && !(s && s.a === h)) this._moveHeld(h);
-      if (h.pinching && h.held) {
-        if (this.ui.overTrash(h.x, h.y)) trashArmed = true;
-        else snapPreview ??= this.findSnap(h.members);
+      if (h.pinching && h.held && !(s && s.a === h)) {
+        this._moveHeld(h);
+        const snap = this._magnet(h);
+        if (snap) { snapPreview ??= snap; snapPreview.locked = h.lock; }
       }
+      if (h.pinching && h.held && this.ui.overTrash(h.x, h.y)) trashArmed = true;
       if (!h.pinching) {
         const item = this.ui.elementAt(h.x, h.y)?.closest?.('.palette-item');
         if (item) hot.add(item); else hover ??= this.pick(h.x, h.y);
@@ -370,14 +397,18 @@ export class Interaction {
     this.ui.setPaletteHot(hot);
     this.ui.setTrashArmed(trashArmed);
     this.marker.visible = !!snapPreview;
-    if (snapPreview) this.marker.position.copy(snapPreview.T.pos);
+    if (snapPreview) {
+      this.marker.position.copy(snapPreview.T.pos);
+      this.marker.material.color.setHex(snapPreview.locked ? 0x5df2a0 : 0x4de1ff);
+      this.marker.scale.setScalar(snapPreview.locked ? 1.4 : 1);
+    }
 
     const lifted = new Set();
     let held = null;
     for (const h of this.hands.values()) {
       if (!h.held) continue;
       held ??= h.held;
-      h.members.forEach((m) => lifted.add(m));
+      if (!h.lock) h.members.forEach((m) => lifted.add(m)); // a magnet-locked part sits flush, not lifted
     }
     for (const p of this.parts) {
       p.setGlow(lifted.has(p) || p === hover ? 1 : 0);
@@ -391,6 +422,11 @@ export class Interaction {
   // Move the held part towards the hand, carrying its assembly along rigidly around the held part.
   _moveHeld(h) {
     const g = h.held.group, wp = this.ctx.toWorld(h.x, h.y);
+    if (h.lock) { // held by the magnet: only a firm pull away releases it
+      const away = Math.hypot(wp.x + h.offset.x - g.position.x, wp.y + h.offset.y - g.position.y);
+      if (away < h.lockRange * 0.9) return;
+      h.lock = false;
+    }
     const oldPos = g.position.clone(), oldQ = g.quaternion.clone();
     const newPos = new THREE.Vector3(
       oldPos.x + (wp.x + h.offset.x - oldPos.x) * 0.7,

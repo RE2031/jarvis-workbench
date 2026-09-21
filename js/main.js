@@ -196,7 +196,7 @@ requestAnimationFrame(frame);
 
 // Console / future voice-command entry point, e.g. jarvis.spawn('wheel', { diameter: 10, width: 4 })
 window.jarvis = {
-  spawn: (type, params) => interaction.spawn(type, params),
+  spawn: (type, params, at) => interaction.spawn(type, params, at),
   clear: () => interaction.clear(),
   parts: interaction.parts,
   connections: interaction.connections,
